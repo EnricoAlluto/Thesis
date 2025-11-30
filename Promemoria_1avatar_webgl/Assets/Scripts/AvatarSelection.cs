@@ -1,0 +1,699 @@
+using UnityEngine;
+using UnityEngine.UI;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine.SceneManagement;
+using TMPro;
+using System;
+using UnityEngine.Networking;
+
+public class AvatarSelection : MonoBehaviour 
+{
+    private static string userID = "default_user";
+    private static bool isActive = true; 
+    public GameObject[] bacheche;
+    public GameObject[] avatarModels;
+    public Button backButton;
+    public Button newMainSceneButton;
+ 
+    public GameObject mainScene;
+    public GameObject[] stanze;
+    
+    private static int selectedAvatarIndex = -1; 
+    private static int selectedRoomIndex = -1;
+    private Transform[] originalParents;
+    private Vector3[] originalPositions;
+    private Quaternion[] originalRotations;
+    private Vector3[] originalScales;
+    private Transform[] roomAvatarContainers;
+    private Transform defaultParentContainer;
+    private GameObject currentAvatarInRoom;
+
+    void Awake()
+    {
+        //Debug.Log("AvatarSelection Awake chiamato");
+
+        GameObject containerObj = new GameObject("DefaultAvatarContainer");
+        containerObj.transform.SetParent(transform);
+        defaultParentContainer = containerObj.transform;
+        
+        if (backButton != null)
+        {
+            backButton.gameObject.SetActive(false);
+            backButton.onClick.AddListener(TornaAllaSceltaAvatar);
+        }
+        
+        if (newMainSceneButton != null)
+        {
+            //newMainSceneButton.gameObject.SetActive(true); 
+            // newMainSceneButton.onClick.AddListener(TuaFunzionePersonalizzata);
+        }
+        
+        userID = PlayerPrefs.GetString("UserID", "");
+        if (string.IsNullOrEmpty(userID))
+        {
+            userID = "user_" + SystemInfo.deviceUniqueIdentifier;
+            PlayerPrefs.SetString("UserID", userID);
+        }
+        
+        if (stanze != null)
+        {
+            foreach (GameObject stanza in stanze)
+            {
+                if (stanza != null)
+                {
+                    stanza.SetActive(false);
+                }
+            }
+        }
+        
+        if (mainScene != null)
+        {
+            mainScene.SetActive(true);
+        }
+        
+        originalParents = new Transform[avatarModels.Length];
+        originalPositions = new Vector3[avatarModels.Length];
+        originalRotations = new Quaternion[avatarModels.Length];
+        originalScales = new Vector3[avatarModels.Length];
+        
+        for (int i = 0; i < avatarModels.Length; i++)
+        {
+            if (avatarModels[i] != null)
+            {
+                originalParents[i] = avatarModels[i].transform.parent;
+                originalPositions[i] = avatarModels[i].transform.localPosition;
+                originalRotations[i] = avatarModels[i].transform.localRotation;
+                originalScales[i] = avatarModels[i].transform.localScale;
+                //avatarModels[i].SetActive(false);
+                
+                if (originalParents[i] == null)
+                {
+                    avatarModels[i].transform.SetParent(defaultParentContainer);
+                    originalParents[i] = defaultParentContainer;
+                }
+            }
+        }
+        
+        roomAvatarContainers = new Transform[stanze.Length];
+        for (int i = 0; i < stanze.Length; i++)
+        {
+            if (stanze[i] != null)
+            {
+                Transform container = stanze[i].transform.Find("AvatarContainer");
+                if (container == null)
+                {
+                    GameObject newContainer = new GameObject("AvatarContainer");
+                    newContainer.transform.SetParent(stanze[i].transform);
+                    container = newContainer.transform;
+                }
+                roomAvatarContainers[i] = container;
+            }
+        }
+    }
+
+    // Riferimento al manager degli avatar
+    //private AvatarFinishManager _avatarFinishManager;
+    
+    private IEnumerator Start()
+    {
+        /*_avatarFinishManager = FindObjectOfType<AvatarFinishManager>();
+        
+        if (_avatarFinishManager != null)
+        {
+            Debug.Log("AvatarFinishManager trovato nella scena, procedo con l'inizializzazione...");
+            if (_avatarFinishManager.caricaAutomaticamenteAllAvvio)
+            {
+                _avatarFinishManager.CaricaUltimiAvatarSalvatiAllAvvio();
+            }
+        }
+        else
+        {
+            Debug.LogWarning("AvatarFinishManager non trovato nella scena. La gestione degli avatar potrebbe non funzionare correttamente.");
+        }
+        */
+        yield return null;
+
+        foreach (GameObject bacheca in bacheche)
+        {
+            if (bacheca != null)
+                bacheca.SetActive(false);
+        }
+
+        for (int i = 0; i < avatarModels.Length; i++)
+        {
+            if (avatarModels[i] != null)
+            {
+                if (avatarModels[i].transform.parent == null)
+                {
+                    avatarModels[i].transform.SetParent(defaultParentContainer);
+                    originalParents[i] = defaultParentContainer;
+                }
+                //avatarModels[i].SetActive(false);
+            }
+        }
+        
+        selectedAvatarIndex = -1;
+        selectedRoomIndex = -1;
+        
+        for (int i = 0; i < avatarModels.Length; i++)
+        {
+            if (avatarModels[i] != null)
+            {
+                AvatarClick clickScript = avatarModels[i].GetComponent<AvatarClick>();
+                if (clickScript != null)
+                {
+                    clickScript.avatarIndex = i;
+                }
+                SetupAvatarInteraction(avatarModels[i]);
+            }
+        }
+        
+       // Debug.Log("Inizializzazione AvatarSelection completata");
+    }
+
+    private void UpdateNewButtonVisibility()
+    {
+        if (newMainSceneButton == null) return;
+
+        int avatarCount = 0;
+        foreach (GameObject avatar in avatarModels)
+        {
+            if (avatar != null && HasLoadedAvatarStructure(avatar))
+            {
+                avatarCount++;
+            }
+        }
+        //newMainSceneButton.gameObject.SetActive(avatarCount < 10);
+
+       // Debug.Log($"[AvatarSelection] Total avatars: {avatarCount}, New button active: {newMainSceneButton.gameObject.activeSelf}");
+    }
+	
+    private void SetupAvatarInteraction(GameObject avatar)
+    {
+        if (avatar == null) return;
+
+        AvatarClick avatarClick = avatar.GetComponent<AvatarClick>();
+        if (avatarClick == null)
+        {
+            avatarClick = avatar.AddComponent<AvatarClick>();
+            for (int i = 0; i < avatarModels.Length; i++)
+            {
+                if (avatarModels[i] == avatar)
+                {
+                    avatarClick.avatarIndex = i;
+                    break;
+                }
+            }
+        }
+
+        AvatarInteraction interaction = avatar.GetComponent<AvatarInteraction>();
+        if (interaction == null)
+        {
+            interaction = avatar.AddComponent<AvatarInteraction>();
+        }
+
+        string avatarName = avatar.name.ToLower();
+        if (avatarName.Contains("stanza1") || avatarName.Contains("room1"))
+        {
+            interaction.roomIndex = 0;
+        }
+        else if (avatarName.Contains("stanza2") || avatarName.Contains("room2"))
+        {
+            interaction.roomIndex = 1;
+        }
+        else if (avatarName.Contains("stanza3") || avatarName.Contains("room3"))
+        {
+            interaction.roomIndex = 2;
+        }
+
+        Collider collider = avatar.GetComponent<Collider>();
+        if (collider == null)
+        {
+            collider = avatar.AddComponent<BoxCollider>();
+            collider.isTrigger = true;
+        }
+
+        var eventTrigger = avatar.GetComponent<UnityEngine.EventSystems.EventTrigger>();
+        if (eventTrigger == null)
+        {
+            eventTrigger = avatar.AddComponent<UnityEngine.EventSystems.EventTrigger>();
+        }
+
+        eventTrigger.triggers.RemoveAll(entry => entry.eventID == UnityEngine.EventSystems.EventTriggerType.PointerClick);
+
+        var pointerClick = new UnityEngine.EventSystems.EventTrigger.Entry();
+        pointerClick.eventID = UnityEngine.EventSystems.EventTriggerType.PointerClick;
+        pointerClick.callback.AddListener((e) => OnAvatarClicked(interaction));
+
+        eventTrigger.triggers.Add(pointerClick);
+
+        if (avatar.GetComponent<Rigidbody>() == null)
+        {
+            Rigidbody rb = avatar.AddComponent<Rigidbody>();
+            rb.isKinematic = true;
+        }
+
+        if (avatar.layer == 0) 
+        {
+            avatar.layer = LayerMask.NameToLayer("UI"); 
+        }
+    }
+
+    private void OnAvatarClicked(AvatarInteraction interaction)
+    {
+        if (interaction != null && isActive)
+        {
+            AvatarClick avatarClick = interaction.GetComponent<AvatarClick>();
+            if (avatarClick != null)
+            {
+                int avatarIndex = avatarClick.avatarIndex;
+
+                selectedAvatarIndex = avatarIndex;
+
+                if (avatarIndex >= 0 && avatarIndex < bacheche.Length)
+                {
+                    ApriBacheca(avatarIndex);
+                }
+                
+                //Debug.Log($"Avatar {interaction.gameObject.name} (Index: {avatarIndex}) clicked");
+            }
+            else
+            {
+                //Debug.LogWarning("Avatar clicked but no AvatarClick component found!");
+            }
+        }
+    }
+
+    public void AttivaSelettore()
+    {
+        isActive = true;
+
+        if (mainScene != null)
+        {
+            mainScene.SetActive(true);
+        }
+        
+        foreach (GameObject stanza in stanze)
+        {
+            if (stanza != null)
+            {
+                stanza.SetActive(false);
+            }
+        }
+
+        RestoreAvatarToOriginalPosition();
+        
+        selectedAvatarIndex = -1;
+        selectedRoomIndex = -1;
+
+        for (int i = 0; i < avatarModels.Length; i++)
+        {
+            if (avatarModels[i] != null)
+            {
+                avatarModels[i].SetActive(true);
+            }
+        }
+
+        foreach (GameObject bacheca in bacheche)
+        {
+            bacheca.SetActive(false);
+        }
+
+        if (backButton != null)
+        {
+            backButton.gameObject.SetActive(false);
+        }
+
+        if (newMainSceneButton != null)
+        {
+            //newMainSceneButton.gameObject.SetActive(true);
+        }
+        UpdateNewButtonVisibility();
+    }
+
+    public void ApriBacheca(int index)
+    {
+        if (!isActive || index < 0 || index >= bacheche.Length) return;
+        
+        selectedAvatarIndex = index;
+
+        foreach (GameObject bacheca in bacheche)
+        {
+            bacheca.SetActive(false);
+        }
+
+        bacheche[index].SetActive(true);
+
+        for (int i = 0; i < avatarModels.Length; i++)
+        {
+            if (avatarModels[i] != null)
+            {
+                //avatarModels[i].SetActive(false);
+            }
+        }
+        
+        if (backButton != null)
+        {
+            backButton.gameObject.SetActive(true);
+        }
+
+        if (newMainSceneButton != null)
+        {
+            //newMainSceneButton.gameObject.SetActive(false);
+        }
+        PersistentQuestionCanvas questionCanvas = FindObjectOfType<PersistentQuestionCanvas>();
+        if (questionCanvas != null)
+        {
+            questionCanvas.AvatarChanged();
+        }
+    }
+
+    public static int GetSelectedAvatarIndex()
+    {
+        return selectedAvatarIndex;
+    }
+    
+    public static int GetSelectedRoomIndex()
+    {
+        return selectedRoomIndex;
+    }
+
+    public void TornaAllaSceltaAvatar()
+    {
+        if (!isActive) return;
+        
+        selectedAvatarIndex = -1;
+
+        RestoreAvatarToOriginalPosition();
+
+        if (mainScene != null)
+        {
+            mainScene.SetActive(true);
+        }
+        foreach (GameObject stanza in stanze)
+        {
+            if (stanza != null)
+            {
+                stanza.SetActive(false);
+            }
+        }
+
+        foreach (GameObject bacheca in bacheche)
+        {
+            bacheca.SetActive(false);
+        }
+
+        for (int i = 0; i < avatarModels.Length; i++)
+        {
+            if (avatarModels[i] != null)
+            {
+                bool hasLoadedAvatar = HasLoadedAvatarStructure(avatarModels[i]);
+                avatarModels[i].SetActive(true);
+            }
+        }
+        
+        if (backButton != null)
+        {
+            backButton.gameObject.SetActive(false);
+        }
+        UpdateNewButtonVisibility();
+
+        PersistentQuestionCanvas questionCanvas = PersistentQuestionCanvas.Instance;
+        if (questionCanvas != null)
+        {
+            questionCanvas.UpdateCurrentRoom();
+        }
+    }
+
+    private bool HasLoadedAvatarStructure(GameObject avatar)
+    {
+        for (int i = 0; i < avatar.transform.childCount; i++)
+        {
+            Transform child = avatar.transform.GetChild(i);
+            
+            for (int j = 0; j < child.childCount; j++)
+            {
+                Transform grandChild = child.GetChild(j);
+                if (grandChild.name.StartsWith("LoadedAvatar_"))
+                {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+
+    public void VaiAllaStanza(int roomIndex)
+    {
+        if (!isActive || roomIndex < 0 || roomIndex >= stanze.Length) return;
+        
+        selectedRoomIndex = roomIndex;
+
+        if (mainScene != null)
+        {
+            mainScene.SetActive(false);
+        }
+        
+        foreach (GameObject stanza in stanze)
+        {
+            if (stanza != null)
+            {
+                stanza.SetActive(false);
+            }
+        }
+
+        stanze[roomIndex].SetActive(true);
+
+        MoveAvatarToRoom(selectedAvatarIndex, roomIndex);
+
+        if (newMainSceneButton != null)
+        {
+            //newMainSceneButton.gameObject.SetActive(false);
+        }
+        
+        var roomCanvasManager = FindObjectOfType<RoomCanvasManager>();
+        if (roomCanvasManager != null)
+        {
+            Debug.Log($"[AvatarSelection] Chiamo OnRoomSelected con roomNumber: {roomIndex}");
+            roomCanvasManager.OnRoomSelected(roomIndex);
+        }
+
+        PersistentQuestionCanvas questionCanvas = PersistentQuestionCanvas.Instance;
+        if (questionCanvas != null)
+        {
+            questionCanvas.RoomChanged();
+        }
+    }
+
+    private void MoveAvatarToRoom(int avatarIndex, int roomIndex)
+    {
+        if (avatarIndex < 0 || avatarIndex >= avatarModels.Length || avatarModels[avatarIndex] == null)
+        {
+            //Debug.LogError($"Indice avatar non valido: {avatarIndex}");
+            return;
+        }
+        
+        if (roomIndex < 0 || roomIndex >= stanze.Length || stanze[roomIndex] == null)
+        {
+            //Debug.LogError($"Stanza non valida all'indice: {roomIndex}");
+            return;
+        }
+
+        GameObject avatarToMove = GetAvatarToMove(avatarIndex);
+        
+        if (avatarToMove == null)
+        {
+            //Debug.LogError($"Impossibile trovare l'avatar per l'indice: {avatarIndex}");
+            return;
+        }
+        
+        Transform avatarContainer = roomAvatarContainers[roomIndex];
+        
+        if (avatarContainer == null)
+        {
+            //Debug.Log($"Creazione di un nuovo container per la stanza {roomIndex}");
+            GameObject container = new GameObject($"AvatarContainer_Room{roomIndex}");
+            container.transform.SetParent(stanze[roomIndex].transform);
+            container.transform.localPosition = Vector3.zero;
+            container.transform.localRotation = Quaternion.identity;
+            container.transform.localScale = Vector3.one;
+            avatarContainer = container.transform;
+            roomAvatarContainers[roomIndex] = avatarContainer;
+        }
+        
+        avatarToMove.transform.SetParent(avatarContainer);
+        avatarToMove.transform.localPosition = Vector3.zero;
+        avatarToMove.transform.localRotation = Quaternion.identity;
+        avatarToMove.transform.localScale = Vector3.one * 0.5f;
+        
+        avatarToMove.SetActive(true);
+        
+        currentAvatarInRoom = avatarToMove;
+        
+        //Debug.Log($"Avatar {avatarIndex} reso visibile nella stanza {roomIndex}");
+        
+        //Debug.Log($"Avatar {avatarIndex} spostato nella stanza {roomIndex}");
+    }
+
+    private GameObject GetAvatarToMove(int avatarIndex)
+    {
+        /*
+        if (_avatarFinishManager != null && 
+            _avatarFinishManager.avatarCreato != null && 
+            avatarIndex == _avatarFinishManager.GetCurrentAvatarIndex())
+        {
+            Debug.Log($"Usando avatar creato dall'AvatarFinishManager per l'indice {avatarIndex}");
+            return _avatarFinishManager.avatarCreato;
+        }*/
+
+        //Debug.Log($"Usando avatar predefinito per l'indice {avatarIndex}");
+        return avatarModels[avatarIndex];
+    }
+    
+    private void RestoreAvatarToOriginalPosition()
+    {
+        if (currentAvatarInRoom != null)
+        {
+            int avatarIndex = FindAvatarIndex(currentAvatarInRoom);
+            
+            if (avatarIndex >= 0 && avatarIndex < originalParents.Length)
+            {
+                currentAvatarInRoom.transform.SetParent(originalParents[avatarIndex]);
+                currentAvatarInRoom.transform.localPosition = originalPositions[avatarIndex];
+                currentAvatarInRoom.transform.localRotation = originalRotations[avatarIndex];
+                currentAvatarInRoom.transform.localScale = originalScales[avatarIndex];
+
+                currentAvatarInRoom.SetActive(false);
+                
+                //Debug.Log($"Avatar {avatarIndex} ripristinato alla posizione originale e nascosto");
+            }
+            
+            currentAvatarInRoom = null;
+        }
+    }
+    
+    private int FindAvatarIndex(GameObject avatar)
+    {
+        for (int i = 0; i < avatarModels.Length; i++)
+        {
+            if (avatarModels[i] == avatar)
+            {
+                return i;
+            }
+        }
+        
+        /* 
+        if (_avatarFinishManager != null && _avatarFinishManager.avatarCreato == avatar)
+        {
+            return _avatarFinishManager.GetCurrentAvatarIndex();
+        }*/
+        
+        return -1;
+    }
+    
+    public void TornaDallaStanzaAllaBacheca()
+    {
+        //Debug.Log("TornaDallaStanzaAllaBacheca called");
+
+        RestoreAvatarToOriginalPosition();
+
+        foreach (GameObject stanza in stanze)
+        {
+            if (stanza != null)
+            {
+                stanza.SetActive(false);
+            }
+        }
+
+        if (mainScene != null)
+        {
+            mainScene.SetActive(true);
+        }
+
+        if (selectedAvatarIndex >= 0 && selectedAvatarIndex < bacheche.Length)
+        {
+            foreach (GameObject bacheca in bacheche)
+            {
+                bacheca.SetActive(false);
+            }
+            
+            bacheche[selectedAvatarIndex].SetActive(true);
+            
+            if (backButton != null)
+            {
+                backButton.gameObject.SetActive(true);
+            }
+
+            if (newMainSceneButton != null)
+            {
+                //newMainSceneButton.gameObject.SetActive(false);
+            }
+        }
+
+        int tempIndex = selectedAvatarIndex;
+
+        selectedRoomIndex = -1;
+        selectedAvatarIndex = tempIndex;
+
+        PersistentQuestionCanvas questionCanvas = PersistentQuestionCanvas.Instance;
+        if (questionCanvas != null)
+        {
+            questionCanvas.UpdateCurrentRoom();
+        }
+    }
+    
+    public void DisattivaSelettore()
+    {
+        isActive = false;
+
+        RestoreAvatarToOriginalPosition();
+
+        foreach (GameObject bacheca in bacheche)
+        {
+            bacheca.SetActive(false);
+        }
+
+        for (int i = 0; i < avatarModels.Length; i++)
+        {
+            if (avatarModels[i] != null)
+            {
+                //avatarModels[i].SetActive(false);
+            }
+        }
+        
+        foreach (GameObject stanza in stanze)
+        {
+            if (stanza != null)
+            {
+                stanza.SetActive(false);
+            }
+        }
+        
+        if (backButton != null)
+        {
+            backButton.gameObject.SetActive(false);
+        }
+
+        if (newMainSceneButton != null)
+        {
+            newMainSceneButton.gameObject.SetActive(false);
+        }
+
+        PersistentQuestionCanvas questionCanvas = PersistentQuestionCanvas.Instance;
+        if (questionCanvas != null)
+        {
+            questionCanvas.ShowCanvas(false);
+        }
+    }
+
+    public void HandleQuestionResponse(bool isYesResponse)
+    {
+    }
+
+    void OnDestroy()
+    {
+        RestoreAvatarToOriginalPosition();
+    }
+}
